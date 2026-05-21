@@ -629,19 +629,50 @@ export const db = {
   admins: {
     all: () => get<{id: string, email: string}>(STORAGE_KEYS.ADMINS),
     save: async (email: string, uid: string) => {
-      // Adiciona o usuário na coleção de admins do Firestore
-      // Isso permite que ele tenha as permissões de isAdmin() nas security rules
+      // The previous version awaited setDoc with no try/catch — a permission
+      // denied or offline error silently rejected and the calling UI handler
+      // would skip its success path, leaving the modal open with no toast.
+      // We now surface a human-readable error and only mutate the local
+      // cache after the Firestore write actually succeeds.
       const docRef = doc(firestore, 'admins', uid);
-      await setDoc(docRef, { email, addedAt: new Date().toISOString() });
-      
+      try {
+        await setDoc(docRef, { email, addedAt: new Date().toISOString() });
+      } catch (e: any) {
+        const code = e?.code || '';
+        if (code === 'permission-denied') {
+          throw new Error(
+            'Permissão negada pelo Firestore. Você precisa estar logado com a conta Google master (não use o modo bypass para esta operação).'
+          );
+        }
+        if (code === 'unavailable' || /offline|network/i.test(e?.message || '')) {
+          throw new Error('Sem conexão com o Firestore. Verifique sua internet e tente novamente.');
+        }
+        throw new Error(`Falha ao salvar admin: ${e?.message || e}`);
+      }
+
       const all = get<{id: string, email: string}>(STORAGE_KEYS.ADMINS);
-      const exists = all.find(a => a.id === uid);
-      if (!exists) {
+      const idx = all.findIndex(a => a.id === uid);
+      if (idx === -1) {
         set(STORAGE_KEYS.ADMINS, [...all, { id: uid, email }]);
+      } else {
+        const next = [...all];
+        next[idx] = { id: uid, email };
+        set(STORAGE_KEYS.ADMINS, next);
       }
     },
     remove: async (uid: string) => {
-      await deleteDoc(doc(firestore, 'admins', uid));
+      try {
+        await deleteDoc(doc(firestore, 'admins', uid));
+      } catch (e: any) {
+        const code = e?.code || '';
+        if (code === 'permission-denied') {
+          throw new Error('Permissão negada. Apenas o admin master logado via Google pode remover admins.');
+        }
+        if (code === 'unavailable' || /offline|network/i.test(e?.message || '')) {
+          throw new Error('Sem conexão com o Firestore. Tente novamente em alguns instantes.');
+        }
+        throw new Error(`Falha ao remover admin: ${e?.message || e}`);
+      }
       const filtered = get<{id: string, email: string}>(STORAGE_KEYS.ADMINS).filter(a => a.id !== uid);
       set(STORAGE_KEYS.ADMINS, filtered);
     }

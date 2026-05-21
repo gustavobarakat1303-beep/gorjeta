@@ -59,6 +59,11 @@ const AdminModule = () => {
   const [units, setUnits] = useState<EstablishmentUnit[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [admins, setAdmins] = useState<{id: string, email: string}[]>([]);
+  // True after we've waited long enough for the admins listener to either
+  // populate the cache or definitively fail. Until then we don't show the
+  // "Acesso Restrito" screen, because the user's UID may legitimately be
+  // in /admins but the snapshot just hasn't arrived yet.
+  const [adminGraceElapsed, setAdminGraceElapsed] = useState(false);
   const [showAdminAdd, setShowAdminAdd] = useState(false);
   const [newAdmin, setNewAdmin] = useState({ email: '', uid: '' });
 
@@ -102,6 +107,26 @@ const AdminModule = () => {
       return () => unsub();
     }
   }, [currentUser, loadData]);
+
+  // Race condition fix: when a non-master admin signs in, the /admins
+  // listener (in dataService.initializeDB) needs a moment to deliver the
+  // first snapshot. Until then `admins.length === 0` and `isAuthorized`
+  // would be false, kicking the legitimate admin to "Acesso Restrito".
+  // We wait up to 4s, or as soon as any admin entry shows up, whichever
+  // comes first.
+  useEffect(() => {
+    if (!currentUser) {
+      setAdminGraceElapsed(false);
+      return;
+    }
+    setAdminGraceElapsed(false);
+    const timeout = window.setTimeout(() => setAdminGraceElapsed(true), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [currentUser?.uid]);
+
+  useEffect(() => {
+    if (admins.length > 0) setAdminGraceElapsed(true);
+  }, [admins.length]);
 
   useEffect(() => {
     if (currentUser) loadData();
@@ -175,9 +200,22 @@ const AdminModule = () => {
     setCurrentUser(user);
   }} />;
 
-  // Se não for master e a lista de admins estiver vazia (ainda carregando ou realmente vazia)
-  // damos um benefício da dúvida de 2 segundos caso o master esteja querendo entrar e o email demore a processar
-  // Mas aqui o master entra direto. Se não for master, esperamos os admins carregarem ou mostramos erro.
+  // Wait for the /admins snapshot to land before deciding the user is
+  // unauthorized — otherwise we kick legitimate admins to "Acesso Restrito"
+  // while their permission record is still in flight. The master is exempt
+  // because the check is purely on the hardcoded email.
+  if (!isAuthorized && !isMaster && !adminGraceElapsed) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+        <RefreshCw className="text-indigo-500 animate-spin mb-4" size={32} />
+        <p className="text-slate-400 font-black uppercase tracking-widest text-[10px] mb-2">Validando Permissões...</p>
+        <p className="text-slate-600 text-[10px] max-w-xs leading-relaxed">
+          Conferindo seu acesso administrativo na nuvem...
+        </p>
+      </div>
+    );
+  }
+
   if (!isAuthorized) {
     // Se logado mas não autorizado
     return (
@@ -592,13 +630,23 @@ const AdminModule = () => {
                     <p className="text-[10px] text-slate-400 font-mono mt-1">UID: {admin.id}</p>
                   </div>
                   <div className="mt-6 flex justify-end">
-                    <button 
+                    <button
                       onClick={async () => {
                         if(admin.email.toLowerCase() === 'gustavobarakat1303@gmail.com') return toast.error('O admin principal não pode ser removido.');
-                        if(confirm(`Remover acesso administrativo de ${admin.email}?`)) {
+                        if(!confirm(`Remover acesso administrativo de ${admin.email}?`)) return;
+                        if(!auth.currentUser) {
+                          return toast.error('Você precisa estar logado via Google (não via bypass) para remover admins.', { duration: 7000 });
+                        }
+                        const loadingId = toast.loading('Removendo admin...');
+                        try {
                           await db.admins.remove(admin.id);
+                          toast.dismiss(loadingId);
                           toast.success('Admin removido.');
                           loadData();
+                        } catch (err: any) {
+                          toast.dismiss(loadingId);
+                          toast.error(err?.message || 'Falha ao remover admin.', { duration: 7000 });
+                          console.error('[ADMIN_REMOVE]', err);
                         }
                       }}
                       className="p-3 text-red-400 bg-red-50 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
@@ -637,15 +685,28 @@ const AdminModule = () => {
                     </div>
                     <div className="flex gap-4 pt-4">
                       <button onClick={() => setShowAdminAdd(false)} className="flex-1 py-4 bg-slate-100 rounded-xl font-black text-slate-400 uppercase tracking-widest text-[11px]">Cancelar</button>
-                      <button 
+                      <button
                         onClick={async () => {
-                          if(!newAdmin.email || !newAdmin.uid) return toast.error('Preencha todos os campos.');
-                          await db.admins.save(newAdmin.email, newAdmin.uid);
-                          toast.success('Admin adicionado!');
-                          setShowAdminAdd(false);
-                          setNewAdmin({ email: '', uid: '' });
-                          loadData();
-                        }} 
+                          const email = newAdmin.email.trim();
+                          const uid = newAdmin.uid.trim();
+                          if(!email || !uid) return toast.error('Preencha todos os campos.');
+                          if(!auth.currentUser) {
+                            return toast.error('Você precisa estar logado via Google (não via bypass) para cadastrar admins, pois a escrita no Firestore exige autenticação real.', { duration: 7000 });
+                          }
+                          const loadingId = toast.loading('Salvando admin...');
+                          try {
+                            await db.admins.save(email, uid);
+                            toast.dismiss(loadingId);
+                            toast.success('Admin adicionado!');
+                            setShowAdminAdd(false);
+                            setNewAdmin({ email: '', uid: '' });
+                            loadData();
+                          } catch (err: any) {
+                            toast.dismiss(loadingId);
+                            toast.error(err?.message || 'Falha ao salvar admin.', { duration: 7000 });
+                            console.error('[ADMIN_SAVE]', err);
+                          }
+                        }}
                         className="flex-1 py-4 bg-amber-500 text-white rounded-xl font-black uppercase tracking-widest text-[11px] shadow-lg shadow-amber-200"
                       >
                         Autorizar
