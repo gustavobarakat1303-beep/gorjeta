@@ -1,0 +1,167 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny - The foundation of a Zero-Trust architecture.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers (Phase 3: Primitive Definition) ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'gustavobarakat1303@gmail.com' ||
+        (isEmailVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 256;
+    }
+
+    // --- Entity Specific Validators (Pillar 2: Validation Blueprints) ---
+
+    function isValidCampaign(data) {
+      return data.keys().hasAll(['id', 'name', 'partner', 'active']) &&
+             data.keys().size() >= 4 && data.keys().size() <= 25 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.partner is string && data.partner.size() <= 50 &&
+             data.active is bool;
+    }
+
+    function isValidUnit(data) {
+      return data.keys().hasAll(['id', 'name', 'active']) &&
+             data.keys().size() >= 3 && data.keys().size() <= 15 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.active is bool;
+    }
+
+    function isValidVoucher(data) {
+      return data.keys().hasAll(['id', 'code', 'customerCode', 'campaignId', 'status']) &&
+             data.keys().size() >= 5 && data.keys().size() <= 20 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.code is string && data.code.size() <= 32 &&
+             data.customerCode is string && data.customerCode.size() <= 128 &&
+             data.campaignId is string && data.campaignId.size() <= 64 &&
+             data.status in ['issued', 'active', 'used'];
+    }
+
+    function isValidWhitelist(data) {
+      return data.keys().hasAll(['code', 'name']) &&
+             data.keys().size() >= 2 && data.keys().size() <= 10 &&
+             data.code is string && data.code.size() <= 128 &&
+             data.name is string && data.name.size() <= 100;
+    }
+
+    function isValidPartner(data) {
+      return data.keys().hasAll(['id', 'name', 'accessCode', 'active']) &&
+             data.keys().size() >= 4 && data.keys().size() <= 15 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.accessCode is string && data.accessCode.size() <= 64 &&
+             data.active is bool;
+    }
+
+    // --- Collection Routes ---
+
+    match /admins/{adminId} {
+      allow list: if isAdmin();
+      allow get: if isSignedIn();
+      allow write: if isAdmin() && isValidId(adminId);
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if true; 
+      allow create: if isAdmin() && isValidId(campaignId) && isValidCampaign(incoming());
+      allow update: if isAdmin() && isValidCampaign(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /units/{unitId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(unitId) && isValidUnit(incoming());
+      allow update: if isAdmin() && isValidUnit(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /partners/{partnerId} {
+      // allow get is public to allow PDV/Contractor login lookups by slug
+      allow get: if isValidId(partnerId);
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidPartner(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /redemptions/{redemptionId} {
+      allow read: if isAdmin();
+      allow create: if (
+        isValidId(redemptionId) &&
+        incoming().keys().hasAll(['voucherCode', 'customerCode', 'campaignId', 'month']) &&
+        incoming().customerCode is string &&
+        incoming().month is string
+      );
+    }
+
+    match /whitelist/{whitelistId} {
+      // We allow 'get' and 'list' to allow employee lookups and contractor list fetches
+      allow get, list: if true;
+      
+      // Permit create & update for admins or whenever valid data formatting is used
+      allow create, update: if (isAdmin() || isValidWhitelist(incoming())) && isValidId(whitelistId);
+      allow delete: if true;
+    }
+
+    match /vouchers/{voucherCode} {
+      // Pillar 3: Path Variable Hardening
+      allow get: if isValidId(voucherCode);
+      allow list: if true; // Publicly needed, but constrained by client logic.
+
+      allow create: if (
+        isValidVoucher(incoming()) &&
+        incoming().status == 'issued' &&
+        isValidId(voucherCode) &&
+        // Pillar 7: Atomicity Guarantee (relational write check)
+        exists(/databases/$(database)/documents/campaigns/$(incoming().campaignId))
+      );
+
+      allow update: if (
+        // Pillar 4: Tiered Identity Logic
+        (
+          // Action: Resgate (Use Voucher) - Restrict keys to prevent "Ghost Field" injection
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedAt', 'usedStore']) &&
+          incoming().status == 'used' &&
+          existing().status == 'issued' &&
+          isValidId(incoming().usedStore) &&
+          exists(/databases/$(database)/documents/units/$(incoming().usedStore))
+        ) ||
+        isAdmin()
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Interaction Collections (Standard deny-all unless specified)
+    match /test/{docId} {
+      allow read: if true; 
+    }
+  }
+}

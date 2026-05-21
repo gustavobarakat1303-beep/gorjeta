@@ -1,0 +1,133 @@
+{
+  "entities": {
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Marketing campaign defining benefits and eligibility",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "partner": { "type": "string" },
+        "value": { "type": "number" },
+        "totalLimit": { "type": "number" },
+        "monthlyLimit": { "type": "number" },
+        "hardStopDate": { "type": "string" },
+        "active": { "type": "boolean" },
+        "eligibilityMode": { "type": "string" },
+        "requirePreRegisteredPhone": { "type": "boolean" },
+        "allowedUnits": { "type": "array" },
+        "limitPerCodePerMonth": { "type": "number" },
+        "monthlyUsageLimit": { "type": "number" },
+        "months": { "type": "array" },
+        "rules_text": { "type": "string" },
+        "partner_logo_url": { "type": "string" },
+        "contractor_logo_url": { "type": "string" },
+        "benefit_type": { "type": "string" },
+        "benefit_value": { "type": "number" }
+      },
+      "required": ["id", "name", "partner", "active"]
+    },
+    "EstablishmentUnit": {
+      "title": "EstablishmentUnit",
+      "description": "Physical location where vouchers can be validated",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "active": { "type": "boolean" },
+        "logoUrl": { "type": "string" }
+      },
+      "required": ["id", "name", "active"]
+    },
+    "Voucher": {
+      "title": "Voucher",
+      "description": "Issued benefit for a customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "customerCode": { "type": "string" },
+        "name": { "type": "string" },
+        "campaignId": { "type": "string" },
+        "status": { "type": "string" },
+        "issuedAt": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "usedAt": { "type": "string" },
+        "usedStore": { "type": "string" }
+      },
+      "required": ["id", "code", "customerCode", "campaignId", "status"]
+    },
+    "Partner": {
+      "title": "Partner",
+      "description": "A contractor/partner company using the system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "accessCode": { "type": "string" },
+        "active": { "type": "boolean" },
+        "logoUrl": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "accessCode", "active"]
+    },
+    "WhitelistEntry": {
+      "title": "WhitelistEntry",
+      "description": "Eligible customer for a campaign",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "campaignId": { "type": "string" }
+      },
+      "required": ["code", "name"]
+    }
+  },
+  "firestore": {
+    "/campaigns/{campaignId}": {
+      "schema": "Campaign",
+      "description": "Collection of all active and inactive campaigns"
+    },
+    "/units/{unitId}": {
+      "schema": "EstablishmentUnit",
+      "description": "Collection of all establishment units"
+    },
+    "/vouchers/{voucherCode}": {
+      "schema": "Voucher",
+      "description": "Collection of all issued vouchers"
+    },
+    "/whitelist/{whitelistId}": {
+      "schema": "WhitelistEntry",
+      "description": "Collection of all eligible customers"
+    },
+    "/partners/{partnerId}": {
+      "schema": "Partner",
+      "description": "Collection of all contracting partners"
+    },
+    "/admins/{adminId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string" },
+          "addedAt": { "type": "string" }
+        }
+      },
+      "description": "Authorized administrators"
+    },
+    "/redemptions/{redemptionId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "voucherCode": { "type": "string" },
+          "customerCode": { "type": "string" },
+          "campaignId": { "type": "string" },
+          "month": { "type": "string" },
+          "issuedAt": { "type": "string" }
+        }
+      },
+      "description": "Locks for monthly redemptions to prevent double dipping"
+    }
+  }
+}

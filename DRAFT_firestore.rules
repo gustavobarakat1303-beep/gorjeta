@@ -1,0 +1,140 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      // Bootstrapped admin
+      return isEmailVerified() && (
+        request.auth.token.email == 'gustavobarakat1303@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Entity Validations ---
+
+    function isValidCampaign(data) {
+      return data.keys().hasAll(['id', 'name', 'partner', 'active']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.partner is string && data.partner.size() <= 50 &&
+             data.active is bool &&
+             (data.get('totalLimit', 0) is int || data.get('totalLimit', 0) is float) &&
+             (data.get('hardStopDate', '') is string);
+    }
+
+    function isValidUnit(data) {
+      return data.keys().hasAll(['id', 'name', 'active']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.active is bool;
+    }
+
+    function isValidVoucher(data) {
+      return data.keys().hasAll(['id', 'code', 'customerCode', 'campaignId', 'status']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.code is string && data.code.size() <= 32 &&
+             data.customerCode is string && data.customerCode.size() <= 128 &&
+             data.campaignId is string && data.campaignId.size() <= 64 &&
+             data.status in ['issued', 'active', 'used'];
+    }
+
+    function isValidWhitelist(data) {
+      return data.keys().hasAll(['code', 'name']) &&
+             data.code is string && data.code.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             (data.get('birthDate', '') is string && data.get('birthDate', '').size() <= 50) &&
+             (data.get('phone', '') is string && data.get('phone', '').size() <= 50) &&
+             (data.get('campaignId', '') is string && data.get('campaignId', '').size() <= 64);
+    }
+
+    function isValidPartner(data) {
+      return data.keys().hasAll(['id', 'name', 'accessCode', 'active']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.accessCode is string && data.accessCode.size() <= 64 &&
+             data.active is bool &&
+             (data.get('responsibleName', '') is string && data.get('responsibleName', '').size() <= 100) &&
+             (data.get('responsibleEmail', '') is string && data.get('responsibleEmail', '').size() <= 100) &&
+             (data.get('responsiblePhone', '') is string && data.get('responsiblePhone', '').size() <= 50);
+    }
+
+    // --- Rules ---
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if true; // Publicly readable for the client module
+      allow create, update: if isAdmin() && isValidCampaign(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /units/{unitId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidUnit(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /whitelist/{whitelistId} {
+      allow read: if true; // Needed for search
+      allow write: if isAdmin() && isValidWhitelist(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /partners/{partnerId} {
+      allow read: if true; // Publicly needed for login
+      allow create, update: if isAdmin() && isValidPartner(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /vouchers/{voucherCode} {
+      allow read: if true; // Publicly readable for validation
+      
+      allow create: if (
+        // Allow anyone to create a voucher if they have the code (simplified for now as there's no auth for clients)
+        // In a real app, we'd verify the consumer auth
+        isValidVoucher(incoming()) &&
+        incoming().status == 'issued' &&
+        exists(/databases/$(database)/documents/campaigns/$(incoming().campaignId))
+      );
+
+      allow update: if (
+        // Action: Use Voucher (Operator or Admin)
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedAt', 'usedStore']) &&
+          incoming().status == 'used' &&
+          existing().status != 'used'
+        ) ||
+        isAdmin()
+      );
+    }
+  }
+}

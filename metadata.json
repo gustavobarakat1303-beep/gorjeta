@@ -1,0 +1,7 @@
+{
+  "name": "Parcerias Corporativas",
+  "description": "Sistema completo de gestão, emissão e validação de vouchers virtuais com segurança antifraude via QR Code assinado, suporte multi-unidades e regras dinâmicas por campanha.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
