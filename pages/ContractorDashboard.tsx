@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { db, useDataSync, subscribe, normalizeString, normalizeDate, firestore } from '../services/dataService';
+import { db, useDataSync, subscribe, normalizeString, normalizeDate, firestore, refreshPartnerStatus } from '../services/dataService';
+import { clearPartnerSession, writePartnerSession } from '../modules/ContractorModule';
 import { Campaign, Voucher, VoucherStatus, WhitelistEntry, User } from '../types';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -42,50 +43,68 @@ const ContractorDashboard: React.FC<ContractorDashboardProps> = ({ user }) => {
 
   const [loadingCloud, setLoadingCloud] = useState(false);
 
-  // Verificar validade e status ativo da sessão do parceiro no Firestore para resiliência de sessões
+  // Session verification: ONLY logs the partner out when we have a
+  // definitive signal that the account is revoked (`active === false`
+  // explicitly returned by Firestore). Transient errors, race conditions,
+  // and "doc not found" lookups never destroy a valid session — they would
+  // be indistinguishable from a real outage and the previous behavior was
+  // the root cause of partners being silently kicked back to the login
+  // screen with "Sessão expirada".
   useEffect(() => {
-    let active = true;
-    const verifyPartner = async () => {
-      try {
-        const cached = db.partners.getById(user.id);
-        if (cached && !cached.active) {
-          toast.error('O acesso para esta empresa foi revogado pela administração.');
-          handleLogout();
-          return;
-        }
+    let cancelled = false;
 
-        // Recuperar dinamicamente as informações do parceiro logado se não estiverem no cache
-        const { doc, getDoc } = await import('firebase/firestore');
-        const docSnap = await getDoc(doc(firestore, 'partners', user.id));
-        if (docSnap.exists()) {
-          const partnerData = { id: docSnap.id, ...docSnap.data() } as any;
-          db.partners.save(partnerData, false); // Restaura no cache local
-          if (!partnerData.active && active) {
-            toast.error('O acesso para esta empresa foi revogado ou desativado.');
-            handleLogout();
-          }
-        } else {
-          console.warn("[SESSION_CHECK] Parceiro não foi encontrado no Firestore!");
-          // Se o UOL/parceiro padrão cair ou se for outro parceiro, damos o benefício da dúvida
-          // se for um login local ou de contingência de testes.
-          if (user.id !== 'uol') {
-            toast.error('Sessão expirada ou empresa não cadastrada.');
-            handleLogout();
-          }
+    const cached = db.partners.getById(user.id);
+    if (cached && cached.active === false) {
+      toast.error('O acesso para esta empresa foi revogado pela administração.');
+      handleLogout();
+      return;
+    }
+
+    const verifyPartner = async () => {
+      const result = await refreshPartnerStatus(user.id);
+      if (cancelled) return;
+
+      if (result.status === 'found') {
+        db.partners.save(result.partner, false);
+        // Keep the persisted session payload in sync with the latest server state.
+        writePartnerSession(user, result.partner);
+        if (result.partner.active === false) {
+          toast.error('O acesso para esta empresa foi revogado ou desativado.');
+          handleLogout();
         }
-      } catch (err) {
-        console.error("[SESSION_CHECK] Erro ao verificar sessão no Firestore:", err);
+        return;
+      }
+
+      // Both `not_found` and `network_error` are treated as non-destructive:
+      // we keep the active session and only log a warning. The partner
+      // continues to use the cached data; a real revocation will be picked
+      // up on the next successful poll or page reload.
+      if (result.status === 'not_found') {
+        console.warn('[SESSION_CHECK] Partner doc not found in Firestore; keeping session alive.');
+      } else {
+        console.warn('[SESSION_CHECK] Transient error while verifying partner; keeping session alive.', result.error);
       }
     };
 
     verifyPartner();
-    return () => { active = false; };
+
+    // Periodic background re-check (every 5 minutes) — same non-destructive
+    // semantics. This catches admin-side deactivations without ever kicking
+    // a healthy session out on a network blip.
+    const interval = window.setInterval(verifyPartner, 5 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, [user.id]);
 
   const loadData = () => {
-    // Monitoramento silencioso: Se houver dado em cache e estiver inativo, encerramos.
+    // Only log out when we have an explicit `active === false` from the
+    // cache. A missing/undefined `active` field is treated as "unknown",
+    // never as "inactive" — same non-destructive policy as verifyPartner.
     const partnerData = db.partners.getById(user.id);
-    if (partnerData && !partnerData.active) {
+    if (partnerData && partnerData.active === false) {
       toast.error('O acesso para esta empresa foi desativado.');
       handleLogout();
       return;
@@ -351,7 +370,7 @@ const ContractorDashboard: React.FC<ContractorDashboardProps> = ({ user }) => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('partnerSession');
+    clearPartnerSession();
     window.location.reload();
   };
 

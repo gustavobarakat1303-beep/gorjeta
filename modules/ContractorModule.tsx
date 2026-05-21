@@ -1,129 +1,169 @@
 
 import React, { useState } from 'react';
-import { Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { Routes, Route, Link } from 'react-router-dom';
 import ContractorDashboard from '../pages/ContractorDashboard';
 import { User, Partner } from '../types';
-import { db, firestore, normalizeString } from '../services/dataService';
+import { db, normalizeString, findPartnerByInput } from '../services/dataService';
 import { Building2, ChevronLeft, Lock, ArrowRight, RefreshCw, HelpCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const ContractorModule: React.FC = () => {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('partnerSession');
-    return saved ? JSON.parse(saved) : null;
-  });
+const PARTNER_SESSION_KEY = 'partnerSession';
+const PARTNER_SESSION_VERSION = 2;
 
-  const handleLogin = (u: User) => {
-    localStorage.setItem('partnerSession', JSON.stringify(u));
-    setUser(u);
+interface PersistedPartnerSession {
+  v: number;
+  user: User;
+  partner: Partner;
+  issuedAt: number;
+}
+
+const readPartnerSession = (): PersistedPartnerSession | null => {
+  try {
+    const raw = localStorage.getItem(PARTNER_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+
+    if (parsed && parsed.v === PARTNER_SESSION_VERSION && parsed.user && parsed.partner) {
+      return parsed as PersistedPartnerSession;
+    }
+
+    // Legacy session (pre-fix): just a User object. Upgrade in place if possible.
+    if (parsed && parsed.id && parsed.role === 'contractor') {
+      const cached = db.partners.getById(parsed.id);
+      if (cached) {
+        const upgraded: PersistedPartnerSession = {
+          v: PARTNER_SESSION_VERSION,
+          user: parsed as User,
+          partner: cached,
+          issuedAt: Date.now()
+        };
+        localStorage.setItem(PARTNER_SESSION_KEY, JSON.stringify(upgraded));
+        return upgraded;
+      }
+      // No cached partner yet — keep the legacy session alive, the dashboard
+      // will hydrate it. Synthesize a minimal partner stub.
+      const stub: Partner = {
+        id: parsed.id,
+        name: parsed.partner || parsed.id,
+        accessCode: '',
+        active: true,
+        createdAt: new Date(0).toISOString()
+      };
+      return {
+        v: PARTNER_SESSION_VERSION,
+        user: parsed as User,
+        partner: stub,
+        issuedAt: Date.now()
+      };
+    }
+  } catch (e) {
+    console.warn('[PARTNER_SESSION] failed to parse session, clearing.', e);
+    localStorage.removeItem(PARTNER_SESSION_KEY);
+  }
+  return null;
+};
+
+export const clearPartnerSession = () => {
+  localStorage.removeItem(PARTNER_SESSION_KEY);
+};
+
+export const writePartnerSession = (user: User, partner: Partner) => {
+  const payload: PersistedPartnerSession = {
+    v: PARTNER_SESSION_VERSION,
+    user,
+    partner,
+    issuedAt: Date.now()
+  };
+  localStorage.setItem(PARTNER_SESSION_KEY, JSON.stringify(payload));
+};
+
+const ContractorModule: React.FC = () => {
+  const [session, setSession] = useState<PersistedPartnerSession | null>(() => readPartnerSession());
+
+  const handleLogin = (user: User, partner: Partner) => {
+    writePartnerSession(user, partner);
+    setSession({ v: PARTNER_SESSION_VERSION, user, partner, issuedAt: Date.now() });
   };
 
-  if (!user) {
+  if (!session) {
     return <ContractorLogin onLogin={handleLogin} />;
   }
 
   return (
     <Routes>
-      <Route path="/" element={<ContractorDashboard user={user} />} />
+      <Route path="/" element={<ContractorDashboard user={session.user} />} />
     </Routes>
   );
 };
 
-const ContractorLogin: React.FC<{ onLogin: (user: User) => void }> = ({ onLogin }) => {
+const ContractorLogin: React.FC<{ onLogin: (user: User, partner: Partner) => void }> = ({ onLogin }) => {
   const [partnerName, setPartnerName] = useState('');
   const [accessCode, setAccessCode] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+
+    const trimmedName = partnerName.trim();
+    const trimmedCode = accessCode.trim();
+    if (!trimmedName || !trimmedCode) {
+      toast.error('Informe o nome da empresa e o código de acesso.');
+      return;
+    }
+
     setLoading(true);
-    
+
     try {
-      const slugInput = normalizeString(partnerName).toLowerCase();
-      
-      // 1. Procura primeiro no cache local
-      let partner = db.partners.all().find(p => p.id === slugInput || normalizeString(p.name).toLowerCase() === slugInput);
-      
-      // 2. Se não estiver no cache local, tenta buscar no Firestore direto
-      if (!partner && slugInput) {
-        try {
-          const { doc, getDoc } = await import('firebase/firestore');
-          const docSnap = await getDoc(doc(firestore, 'partners', slugInput));
-          if (docSnap.exists()) {
-            partner = { id: docSnap.id, ...docSnap.data() } as Partner;
-            db.partners.save(partner, false); // Salva localmente
-          }
-        } catch (e) {
-          console.error("Firestore direct lookup error during login:", e);
-        }
+      const result = await findPartnerByInput(trimmedName);
+
+      if (result.status === 'network_error') {
+        toast.error('Falha de conexão. Verifique sua internet e tente novamente.');
+        return;
       }
 
-      // 3. Busca inteligente tolerante a variações por meio da lista pública de campanhas
-      if (!partner) {
-        try {
-          const typedNormalized = normalizeString(partnerName);
-          if (typedNormalized) {
-            // Varre as campanhas públicas (que são sincronizadas em tempo real para todos na inicialização)
-            const campaignsMatching = db.campaigns.all().filter(c => {
-              const contractorNorm = c.contractor ? normalizeString(c.contractor) : "";
-              const partnerNorm = c.partner ? normalizeString(c.partner) : "";
-              return (
-                (contractorNorm && (contractorNorm.includes(typedNormalized) || typedNormalized.includes(contractorNorm))) ||
-                (partnerNorm && (partnerNorm.includes(typedNormalized) || typedNormalized.includes(partnerNorm)))
-              );
-            });
-            
-            // Se encontrou alguma campanha cujo parceiro casa, tentamos o slug daquele parceiro
-            for (const camp of campaignsMatching) {
-              const candidateNames = [camp.contractor, camp.partner].filter(Boolean) as string[];
-              for (const candName of candidateNames) {
-                const altSlug = normalizeString(candName).toLowerCase();
-                if (altSlug !== slugInput) {
-                  const { doc, getDoc } = await import('firebase/firestore');
-                  const docSnap = await getDoc(doc(firestore, 'partners', altSlug));
-                  if (docSnap.exists()) {
-                    partner = { id: docSnap.id, ...docSnap.data() } as Partner;
-                    db.partners.save(partner, false);
-                    break;
-                  }
-                }
-              }
-              if (partner) break;
-            }
-          }
-        } catch (e) {
-          console.error("Firestore intelligent campaign-matching error during login:", e);
-        }
+      if (result.status === 'not_found') {
+        toast.error('Empresa não encontrada. Confira o nome cadastrado.');
+        return;
       }
 
-      if (partner) {
-        const cleanSavedCode = normalizeString(partner.accessCode);
-        const cleanTypedCode = normalizeString(accessCode);
+      const partner = result.partner;
+      const cleanSavedCode = normalizeString(partner.accessCode || '');
+      const cleanTypedCode = normalizeString(trimmedCode);
 
-        if (cleanSavedCode !== cleanTypedCode) {
-          toast.error('Código de Acesso inválido.');
-          setLoading(false);
-          return;
-        }
-        if (!partner.active) {
-          toast.error('O acesso para esta empresa está temporariamente bloqueado.');
-          setLoading(false);
-          return;
-        }
+      if (!cleanSavedCode) {
+        toast.error('Esta empresa não possui código de acesso configurado. Contate o administrador.');
+        return;
+      }
 
-        onLogin({
+      if (cleanSavedCode !== cleanTypedCode) {
+        toast.error('Código de Acesso inválido.');
+        return;
+      }
+
+      if (!partner.active) {
+        toast.error('O acesso para esta empresa está temporariamente bloqueado.');
+        return;
+      }
+
+      // Persist the canonical partner record locally so the dashboard never
+      // has to re-resolve it on mount (the previous behavior could log the
+      // user out on the first transient Firestore glitch).
+      db.partners.save(partner, false);
+
+      onLogin(
+        {
           id: partner.id,
-          username: `${partner.name.toLowerCase()}_admin`,
+          username: `${(partner.name || partner.id).toLowerCase()}_admin`,
           role: 'contractor',
           partner: partner.name
-        });
-        toast.success(`Acesso autorizado para ${partner.name}`);
-      } else {
-        toast.error('Empresa ou Código de Acesso inválidos.');
-      }
+        },
+        partner
+      );
+      toast.success(`Acesso autorizado para ${partner.name}`);
     } catch (err) {
-      toast.error('Erro ao processar login.');
+      console.error('[CONTRACTOR_LOGIN] unexpected error:', err);
+      toast.error('Erro ao processar login. Tente novamente.');
     } finally {
       setLoading(false);
     }

@@ -213,6 +213,139 @@ const set = (key: string, val: any) => {
   notify();
 };
 
+// --- Partner lookup helpers (shared by login + session verification) ---
+
+export type PartnerLookupResult =
+  | { status: 'found'; partner: Partner }
+  | { status: 'not_found' }
+  | { status: 'network_error'; error: unknown };
+
+const partnerSlug = (name: string) => normalizeString(name).toLowerCase();
+
+const partnerMatchesInput = (p: Partner, normalizedInput: string) => {
+  if (!normalizedInput) return false;
+  const idNorm = (p.id || '').toLowerCase();
+  const nameNorm = normalizeString(p.name || '').toLowerCase();
+  return idNorm === normalizedInput || nameNorm === normalizedInput;
+};
+
+// Robust partner lookup used by the contractor login flow and the
+// dashboard session check.
+//
+// Firestore rules allow public `get` on /partners/{id} but NOT `list`, so
+// we cannot scan the partners collection from a non-admin client. Instead,
+// we resolve unknown name spellings via the publicly-listable /campaigns
+// collection (which carries `partner` and `contractor` fields), then look
+// the resolved slug up by `getDoc`.
+//
+// We never return `not_found` for a Firestore failure — those map to
+// `network_error` so callers can keep the session alive instead of kicking
+// the partner out on a transient blip.
+export const findPartnerByInput = async (
+  rawInput: string
+): Promise<PartnerLookupResult> => {
+  const normalizedInput = partnerSlug(rawInput || '');
+  if (!normalizedInput) return { status: 'not_found' };
+
+  // 1. Local cache by id or by name
+  const localHit = get<Partner>(STORAGE_KEYS.PARTNERS).find(p =>
+    partnerMatchesInput(p, normalizedInput)
+  );
+  if (localHit) return { status: 'found', partner: localHit };
+
+  let sawNetworkError = false;
+
+  // 2. Direct slug lookup against Firestore (rules: public `get`)
+  try {
+    const snap = await getDoc(doc(firestore, 'partners', normalizedInput));
+    if (snap.exists()) {
+      const partner = { id: snap.id, ...snap.data() } as Partner;
+      return { status: 'found', partner };
+    }
+  } catch (e) {
+    console.warn('[PARTNER_LOOKUP] direct getDoc failed:', e);
+    sawNetworkError = true;
+  }
+
+  // 3. Fuzzy resolution through campaigns (rules: public read/list).
+  //    Build candidate slugs from any campaign whose `partner` or
+  //    `contractor` field overlaps with what the user typed.
+  const candidates = new Set<string>();
+  const collectFromCampaigns = (campaigns: Campaign[]) => {
+    campaigns.forEach(c => {
+      const partnerNorm = c.partner ? normalizeString(c.partner) : '';
+      const contractorNorm = c.contractor ? normalizeString(c.contractor) : '';
+      const inputUpper = normalizedInput.toUpperCase();
+
+      const matchesPartner =
+        partnerNorm &&
+        (partnerNorm === inputUpper ||
+          partnerNorm.includes(inputUpper) ||
+          inputUpper.includes(partnerNorm));
+      const matchesContractor =
+        contractorNorm &&
+        (contractorNorm === inputUpper ||
+          contractorNorm.includes(inputUpper) ||
+          inputUpper.includes(contractorNorm));
+
+      if (matchesPartner && c.partner) candidates.add(partnerSlug(c.partner));
+      if (matchesContractor && c.contractor) candidates.add(partnerSlug(c.contractor));
+    });
+  };
+
+  collectFromCampaigns(get<Campaign>(STORAGE_KEYS.CAMPAIGNS));
+
+  if (candidates.size === 0) {
+    try {
+      const campSnap = await getDocs(collection(firestore, 'campaigns'));
+      const remote: Campaign[] = [];
+      campSnap.forEach(d => remote.push({ id: d.id, ...d.data() } as Campaign));
+      collectFromCampaigns(remote);
+    } catch (e) {
+      console.warn('[PARTNER_LOOKUP] campaign-based fuzzy scan failed:', e);
+      sawNetworkError = true;
+    }
+  }
+
+  candidates.delete(normalizedInput); // already tried directly above
+
+  for (const slug of candidates) {
+    try {
+      const snap = await getDoc(doc(firestore, 'partners', slug));
+      if (snap.exists()) {
+        const partner = { id: snap.id, ...snap.data() } as Partner;
+        return { status: 'found', partner };
+      }
+    } catch (e) {
+      console.warn('[PARTNER_LOOKUP] candidate getDoc failed for slug', slug, e);
+      sawNetworkError = true;
+    }
+  }
+
+  if (sawNetworkError) return { status: 'network_error', error: 'firestore' };
+  return { status: 'not_found' };
+};
+
+// Refreshes a single partner from Firestore. Used by the dashboard to
+// honor admin-side `active = false` revocations without ever destroying
+// a session on transient errors.
+export const refreshPartnerStatus = async (
+  partnerId: string
+): Promise<PartnerLookupResult> => {
+  if (!partnerId) return { status: 'not_found' };
+  try {
+    const snap = await getDoc(doc(firestore, 'partners', partnerId));
+    if (snap.exists()) {
+      const partner = { id: snap.id, ...snap.data() } as Partner;
+      return { status: 'found', partner };
+    }
+    return { status: 'not_found' };
+  } catch (e) {
+    console.warn('[PARTNER_LOOKUP] refreshPartnerStatus failed:', e);
+    return { status: 'network_error', error: e };
+  }
+};
+
 export const db = {
   clearAll: () => {
     localStorage.clear();
@@ -496,19 +629,50 @@ export const db = {
   admins: {
     all: () => get<{id: string, email: string}>(STORAGE_KEYS.ADMINS),
     save: async (email: string, uid: string) => {
-      // Adiciona o usuário na coleção de admins do Firestore
-      // Isso permite que ele tenha as permissões de isAdmin() nas security rules
+      // The previous version awaited setDoc with no try/catch — a permission
+      // denied or offline error silently rejected and the calling UI handler
+      // would skip its success path, leaving the modal open with no toast.
+      // We now surface a human-readable error and only mutate the local
+      // cache after the Firestore write actually succeeds.
       const docRef = doc(firestore, 'admins', uid);
-      await setDoc(docRef, { email, addedAt: new Date().toISOString() });
-      
+      try {
+        await setDoc(docRef, { email, addedAt: new Date().toISOString() });
+      } catch (e: any) {
+        const code = e?.code || '';
+        if (code === 'permission-denied') {
+          throw new Error(
+            'Permissão negada pelo Firestore. Você precisa estar logado com a conta Google master (não use o modo bypass para esta operação).'
+          );
+        }
+        if (code === 'unavailable' || /offline|network/i.test(e?.message || '')) {
+          throw new Error('Sem conexão com o Firestore. Verifique sua internet e tente novamente.');
+        }
+        throw new Error(`Falha ao salvar admin: ${e?.message || e}`);
+      }
+
       const all = get<{id: string, email: string}>(STORAGE_KEYS.ADMINS);
-      const exists = all.find(a => a.id === uid);
-      if (!exists) {
+      const idx = all.findIndex(a => a.id === uid);
+      if (idx === -1) {
         set(STORAGE_KEYS.ADMINS, [...all, { id: uid, email }]);
+      } else {
+        const next = [...all];
+        next[idx] = { id: uid, email };
+        set(STORAGE_KEYS.ADMINS, next);
       }
     },
     remove: async (uid: string) => {
-      await deleteDoc(doc(firestore, 'admins', uid));
+      try {
+        await deleteDoc(doc(firestore, 'admins', uid));
+      } catch (e: any) {
+        const code = e?.code || '';
+        if (code === 'permission-denied') {
+          throw new Error('Permissão negada. Apenas o admin master logado via Google pode remover admins.');
+        }
+        if (code === 'unavailable' || /offline|network/i.test(e?.message || '')) {
+          throw new Error('Sem conexão com o Firestore. Tente novamente em alguns instantes.');
+        }
+        throw new Error(`Falha ao remover admin: ${e?.message || e}`);
+      }
       const filtered = get<{id: string, email: string}>(STORAGE_KEYS.ADMINS).filter(a => a.id !== uid);
       set(STORAGE_KEYS.ADMINS, filtered);
     }
