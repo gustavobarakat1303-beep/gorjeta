@@ -1,20 +1,20 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Parcerias Corporativas — Plataforma de Vouchers/Gorjetas
 
-# Run and deploy your AI Studio app
+SPA (Vite + React) com backend **Firebase** (Firestore + Login Google). Hospedagem **gratuita** na
+Vercel — sem servidor próprio para manter.
 
-This contains everything you need to run your app locally.
+## Rodar localmente
 
-View your app in AI Studio: https://ai.studio/apps/4adede4d-6f94-4760-a7f0-a5878dc2a102
+**Pré-requisitos:** Node.js 22.x
 
-## Run Locally
+```bash
+npm install
+npm run dev      # http://localhost:3000
+```
 
-**Prerequisites:**  Node.js
+> *(Opcional)* Para o módulo de IA, crie um arquivo `.env.local` com `GEMINI_API_KEY=sua_chave`.
+> O app funciona sem ela; apenas o recurso de IA fica inativo.
 
+## Deploy
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Veja **[DEPLOY.md](DEPLOY.md)** — publicação gratuita na Vercel e instruções de domínio próprio.
