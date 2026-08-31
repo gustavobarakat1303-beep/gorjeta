@@ -1,0 +1,149 @@
+{
+  "_comment": "Mapeamento de fornecedores equivalentes descobertos ao longo das reconciliacoes mensais. Chave = nome canonico (o mais comum). Valores = variantes conhecidas (fantasia x razao social, apelidos na fatura do cartao, etc). Editar aqui para melhorar futuras conciliacoes.",
+  "AMBEV": [
+    "AMBEV",
+    "AMBEV CDD",
+    "AMBEV S/A CDD",
+    "AMBEV S/A",
+    "CDL SAO PAULO"
+  ],
+  "KHADUN": [
+    "KHADUN",
+    "KHADUN B. LIMA",
+    "KHADUN B LIMA"
+  ],
+  "MEGA G ALIMENTOS": [
+    "MEGA G",
+    "MEGA G ALIMENTOS",
+    "NOVA MEGA G",
+    "NOVA MEGA G ATACADISTA DE ALIMENTOS S/A"
+  ],
+  "ST ETIENNE": [
+    "ST ETIENE PADARIA",
+    "ST ETIENNE",
+    "ST ETIENNE CITY PADARIA",
+    "ST ETIENNE CITY PADARIA E CONFEITARIA LTDA",
+    "ST ETIENNE CITY PADARIA E CONFEITARIA LTDA - FIXO"
+  ],
+  "AVELINOS": [
+    "AVELINOS",
+    "BIDFOOD VINHAIS",
+    "DISTRIB. E IMP IRMAOS AVELINOS LTDA",
+    "DISTRIBUIDORA E IMPORTADORA IRMAOS AVELINOS LTDA",
+    "DIST IRMAOS AVELINOS"
+  ],
+  "CASTELAO": [
+    "CASTELAO",
+    "DISTRIB DE FRIOS E LATICINIOS",
+    "DISTRIB DE FRIOS E LA",
+    "DISTRIBUIDORA DE FRIOS E LATICINIOS"
+  ],
+  "PMG": [
+    "PMG",
+    "PAMA COMERCIO",
+    "PAMA COMERCIO DE GENE",
+    "PAMA COMERCIO DE GENEROS ALIMENTICIOS"
+  ],
+  "MULTIFOODS": [
+    "MULTFOODS",
+    "MULTIFOODS",
+    "MULTIFOODS COM DE ALIM E BEBIDAS LTDA",
+    "MULTIFOODS COMERCIO DE ALIMENTOS E BEBIDAS LTDA"
+  ],
+  "TRAMONTINA": [
+    "TRAMONTINA",
+    "TRAMONTINA SUDESTE S/A"
+  ],
+  "FACEBOOK": [
+    "FACEBOOK",
+    "FACEBK",
+    "META"
+  ],
+  "GOOGLE ADS": [
+    "GOOGLE ADS",
+    "GOOGLE ADS2978776244"
+  ],
+  "GOOGLE CLOUD": [
+    "GOOGLE CLOUD"
+  ],
+  "OPENAI": [
+    "OPENAI",
+    "OPENAI CHATGPT SUBSCR",
+    "CHATGPT PLUS SUBSCRIPTION"
+  ],
+  "ANTHROPIC": [
+    "ANTHROPIC",
+    "CLAUDE.AI SUBSCRIPTION",
+    "ANTHROPIC CLAUDE SUB"
+  ],
+  "SPOTIFY": [
+    "SPOTIFY",
+    "SPOTIFY BRASIL",
+    "DM SPOTIFY"
+  ],
+  "ADOBE": [
+    "ADOBE",
+    "ADOBE SYSTEMS BRASIL LTDA",
+    "EBN ADOBE"
+  ],
+  "CANVA": [
+    "CANVA",
+    "EBN CANVA"
+  ],
+  "IMIGRANTES BEBIDAS": [
+    "IMIGRANTES BEBIDAS",
+    "IMIGBEB IMIGBEBIDAS",
+    "IMIGBEB"
+  ],
+  "SETTI SOLUCOES": [
+    "SETTI SOLUCOES DIGITAIS",
+    "SETTI SOLUCO COMEMOREA"
+  ],
+  "KALUNGA": [
+    "KALUNGA",
+    "KALUNGA.COM",
+    "KALUNGA SA",
+    "KALUNGA COM E IND GRAFICA LTDA",
+    "KALUNGA SHOP",
+    "KALUNGA FRAD"
+  ],
+  "SONDA": [
+    "SONDA",
+    "SONDA S SONDA1"
+  ],
+  "SAMS CLUB": [
+    "SAMS CLUB",
+    "SAMS CLUB MORUMBI"
+  ],
+  "MISTRAL": [
+    "MISTRAL",
+    "MISTRAL IMPORTADORA",
+    "MISTRAL IMPORTADORA LTDA"
+  ],
+  "SANTA LUZIA": [
+    "SANTA LUZIA"
+  ],
+  "MERCADO LIVRE": [
+    "MERCADO LIVRE",
+    "MERCADOLIVRE",
+    "MERCADOLIVRE MERCADOL",
+    "EBAZAR",
+    "EBAZAR.COM.BR. LTDA"
+  ],
+  "NETFEIRA": [
+    "NETFEIRA"
+  ],
+  "HORTIFRUTI POMAR DA VILA": [
+    "HORTIFRUTI POMAR DA VI",
+    "HORTIFRUTI POMAR DA VILA",
+    "HORTIFRUTI POMAR DA VILA E MERCEARIA L"
+  ],
+  "MP THIAGUAS": [
+    "MP THIAGUAS",
+    "MP TIAGOHENRIQUEALVES"
+  ],
+  "TIM": [
+    "TIM",
+    "TIM 28077162886"
+  ]
+}
