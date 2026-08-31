@@ -100,6 +100,15 @@ Padroes historicos ja capturados:
 - **NOVA MEGA G = MEGA G**
 - **ST ETIENE PADARIA (Everest) vs ST ETIENNE CITY PADARIA (Excel)** - variantes de nome (mas cuidado: podem ser pedidos diferentes com valores diferentes; conferir data).
 
+## Convencao de nomenclatura de fatura
+
+O Itau chama a fatura pelo **mes do vencimento** (ex: "Fatura Fechada - Agosto/2026" vence 13/08). Mas o usuario se refere pelo **mes das compras** (a fatura que vence em agosto cobre compras feitas em julho, entao chamamos de "fatura de julho").
+
+Convencao a adotar:
+- Nome do arquivo de saida: `Conciliacao_Cartao_<MesCompras><ANO>.xlsx` (ex: `Conciliacao_Cartao_Jul2026.xlsx`).
+- Rotulo `--mes` no relatorio: `'MM/YYYY (compras) - fatura venc. DD/MM'`.
+- O mes das compras = mes do fechamento anterior ao vencimento. Ex: fechou 02/08, vence 13/08 -> compras de meados de 07 a inicio de 08 -> chamamos de "julho".
+
 ## Observacoes de dominio
 
 - **Facebook agregado**: A fatura mostra varias cobrancas FACEBK de R$ 130 (uma por dia). No Everest / Excel, isso as vezes vira uma unica entrada consolidada "FACEBOOK R$ X.XXX,XX" pela soma. Se ver muitos FACEBK isolados na lista de "falta", verificar se ha uma entrada agregada nas sobras.
