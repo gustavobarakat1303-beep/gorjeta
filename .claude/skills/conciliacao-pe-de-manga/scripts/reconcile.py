@@ -195,6 +195,29 @@ def load_everest_notas(path, exclude_taxes=False):
                 origem=None,
                 imposto=False,
             ))
+    # tenta 'Pagamento de Titulos' (Fantasia Fornecedor + V. Saldo, com Portador)
+    elif 'FANTASIA FORNECEDOR' in hmap and ('V. SALDO' in hmap or 'V. ATUALIZADO' in hmap):
+        tipo_export = 'Pagamento'
+        valor_key = 'V. SALDO' if 'V. SALDO' in hmap else 'V. ATUALIZADO'
+        for r in ws.iter_rows(min_row=2, values_only=True):
+            forn = r[hmap['FANTASIA FORNECEDOR']]
+            if not forn: continue
+            vtot = r[hmap[valor_key]]
+            if vtot is None: continue
+            desc_portador = r[hmap.get('DESCRIÇÃO DO PORTADOR')] if 'DESCRIÇÃO DO PORTADOR' in hmap else (r[hmap.get('DESCRICAO DO PORTADOR')] if 'DESCRICAO DO PORTADOR' in hmap else None)
+            is_tax = bool(TAX_RE.search(str(forn).upper()))
+            rows.append(dict(
+                fornecedor=str(forn).strip(),
+                tipo=None,
+                numero=r[hmap.get('NOTA')] if 'NOTA' in hmap else None,
+                danfe=r[hmap.get('N. FISCAL')] if 'N. FISCAL' in hmap else None,
+                emissao=r[hmap.get('D. VENCIMENTO')] if 'D. VENCIMENTO' in hmap else None,
+                valor=round(float(vtot), 2),
+                lancamento=r[hmap.get('D. LANÇAMENTO')] if 'D. LANÇAMENTO' in hmap else (r[hmap.get('D. LANCAMENTO')] if 'D. LANCAMENTO' in hmap else None),
+                portador=desc_portador,
+                origem=r[hmap.get('ORIGEM')] if 'ORIGEM' in hmap else None,
+                imposto=is_tax,
+            ))
     # tenta 'Carteira de Titulos a Pagar' (Razao Fornecedor + V. Original)
     elif 'RAZÃO FORNECEDOR' in hmap or 'RAZAO FORNECEDOR' in hmap:
         tipo_export = 'Carteira'
@@ -614,12 +637,13 @@ def build_xlsx(out_path, mes_label, excel, everest, fatura,
 # =============================================================================
 def main():
     ap = argparse.ArgumentParser(description='Conciliacao mensal Pe de Manga')
-    ap.add_argument('--excel', required=True, help='Excel controle (primario)')
+    ap.add_argument('--excel', help='Excel controle (primario). Opcional: se omitido, so cruza Everest x Fatura.')
     ap.add_argument('--everest', help='Everest export (Manutencao Notas ou Carteira Titulos)')
     ap.add_argument('--fatura', help='Fatura fechada Itau (xlsx)')
     ap.add_argument('--out', required=True, help='Caminho do xlsx de saida')
     ap.add_argument('--mes', default='', help='Rotulo do mes ex "07/2026"')
-    ap.add_argument('--no-taxes', action='store_true', help='Excluir impostos do Everest (aplica se Carteira de Titulos)')
+    ap.add_argument('--no-taxes', action='store_true', help='Excluir impostos do Everest (aplica se Carteira/Pagamento)')
+    ap.add_argument('--portador', help='Filtrar Everest por Descricao do Portador (ex "CARTAO DE CREDITO"). Case-insensitive.')
     ap.add_argument('--supplier-threshold', type=float, default=0.55, help='Score minimo de similaridade de fornecedor (0..1)')
     ap.add_argument('--tolerance-abs', type=float, default=50.0)
     ap.add_argument('--tolerance-pct', type=float, default=0.05)
@@ -629,13 +653,19 @@ def main():
     aliases = load_aliases()
     print(f'Aliases carregados: {len(aliases)} variantes -> canonicos')
 
-    excel = load_excel_controle(args.excel)
-    print(f'Excel:   {len(excel)} lancamentos, R$ {sum(x["valor"] for x in excel):,.2f}')
+    excel = []
+    if args.excel:
+        excel = load_excel_controle(args.excel)
+        print(f'Excel:   {len(excel)} lancamentos, R$ {sum(x["valor"] for x in excel):,.2f}')
 
     everest = []
     if args.everest:
         everest, tipo = load_everest_notas(args.everest, exclude_taxes=args.no_taxes)
         print(f'Everest ({tipo}): {len(everest)} titulos, R$ {sum(x["valor"] for x in everest):,.2f}')
+        if args.portador:
+            filtro = args.portador.upper().strip()
+            everest = [x for x in everest if x.get('portador') and filtro in str(x['portador']).upper()]
+            print(f'  filtrado por portador "{args.portador}": {len(everest)} titulos, R$ {sum(x["valor"] for x in everest):,.2f}')
 
     fatura = []
     if args.fatura:
